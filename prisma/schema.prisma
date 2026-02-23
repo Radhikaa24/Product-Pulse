@@ -1,0 +1,140 @@
+// prisma/schema.prisma
+// Product Pulse — Database Schema
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── CONTENT MODELS ──────────────────────────────────────────────────────────
+
+model Story {
+  id            String   @id @default(uuid())
+  product       String   @db.VarChar(200)
+  tagline       String   @db.VarChar(300)
+  source        String   @db.VarChar(100)   // "Product Hunt", "Lenny's Newsletter", etc.
+  sourceUrl     String   @map("source_url")
+  category      String   @db.VarChar(100)   // "AI / Productivity", "Growth / Email"
+  tags          String[]                     // ["AI", "UX", "Growth"]
+  summary       String   @db.Text           // 2-3 paragraph overview
+  breakdown     Json                         // [{heading, body}, {heading, body}, ...]
+  readTimeMin   Int      @default(4) @map("read_time_min")
+  status        StoryStatus @default(DRAFT)
+  editionDate   DateTime?   @map("edition_date") @db.Date
+  rawContent    String?  @db.Text @map("raw_content") // original scraped content before processing
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  edition       Edition?    @relation(fields: [editionDate], references: [date])
+  challenges    Challenge[]
+  reads         StoryRead[]
+
+  @@index([editionDate])
+  @@index([status])
+  @@map("stories")
+}
+
+enum StoryStatus {
+  DRAFT       // ingested, not yet processed
+  PROCESSING  // AI summary/breakdown being generated
+  REVIEW      // ready for editorial review
+  PUBLISHED   // live and visible to users
+  ARCHIVED    // past edition, still accessible
+}
+
+model Challenge {
+  id            String   @id @default(uuid())
+  linkedStoryId String   @map("linked_story_id")
+  skill         Skill
+  question      String   @db.Text
+  options       Json                         // [{id, text, isCorrect}, ...]
+  explanation   String   @db.Text
+  editionDate   DateTime? @map("edition_date") @db.Date
+  status        StoryStatus @default(DRAFT)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  linkedStory   Story    @relation(fields: [linkedStoryId], references: [id])
+  edition       Edition? @relation(fields: [editionDate], references: [date])
+  submissions   ChallengeSubmission[]
+
+  @@index([editionDate])
+  @@map("challenges")
+}
+
+enum Skill {
+  STRATEGY
+  GROWTH
+  MONETIZATION
+  UX
+  ANALYTICS
+}
+
+model Edition {
+  date          DateTime @id @db.Date       // one edition per day
+  publishedAt   DateTime? @map("published_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  stories       Story[]
+  challenges    Challenge[]
+
+  @@map("editions")
+}
+
+// ─── USER MODELS ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  name          String?
+  avatarUrl     String?  @map("avatar_url")
+  provider      String   @default("google")  // google | github
+  providerId    String   @map("provider_id")
+  currentStreak Int      @default(0) @map("current_streak")
+  longestStreak Int      @default(0) @map("longest_streak")
+  lastActiveDate DateTime? @map("last_active_date") @db.Date
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  storyReads    StoryRead[]
+  submissions   ChallengeSubmission[]
+
+  @@unique([provider, providerId])
+  @@map("users")
+}
+
+model StoryRead {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  storyId       String   @map("story_id")
+  readAt        DateTime @default(now()) @map("read_at")
+  durationSec   Int?     @map("duration_sec")
+
+  user          User     @relation(fields: [userId], references: [id])
+  story         Story    @relation(fields: [storyId], references: [id])
+
+  @@unique([userId, storyId])
+  @@map("story_reads")
+}
+
+model ChallengeSubmission {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  challengeId     String   @map("challenge_id")
+  selectedOption  String   @map("selected_option")  // "a", "b", "c", "d"
+  isCorrect       Boolean  @map("is_correct")
+  submittedAt     DateTime @default(now()) @map("submitted_at")
+
+  user            User      @relation(fields: [userId], references: [id])
+  challenge       Challenge @relation(fields: [challengeId], references: [id])
+
+  @@unique([userId, challengeId])
+  @@map("challenge_submissions")
+}
